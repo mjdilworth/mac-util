@@ -20,7 +20,7 @@ class WindowController: NSObject, ObservableObject {
             
             // Create a window and set the content view controller
             let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 900, height: 640),
+                contentRect: NSRect(x: 0, y: 0, width: 600, height: 520),
                 styleMask: [.titled, .closable, .miniaturizable, .resizable],
                 backing: .buffered,
                 defer: false
@@ -32,7 +32,7 @@ class WindowController: NSObject, ObservableObject {
             window.isReleasedWhenClosed = false
             window.delegate = self
             // Ensure the window can resize but not below the ContentView’s minimum
-            window.contentMinSize = NSSize(width: 700, height: 560)
+            window.contentMinSize = NSSize(width: 520, height: 520)
             
             self.window = window
         }
@@ -112,7 +112,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         task.executableURL = dp
         task.arguments = ["list"]
         do { try task.run() } catch { return (-1, "Failed to run displayplacer: \(error.localizedDescription)", nil) }
-        // Add a 10-second timeout so the UI doesn’t wait forever
+        // Timeout protection (10s)
         var didTimeout = false
         let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
         timer.schedule(deadline: .now() + 10)
@@ -128,7 +128,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         timer.cancel()
         var out = String(data: data, encoding: .utf8) ?? ""
         if didTimeout {
-            out += "\n\n[timeout] displayplacer list terminated after 10s."
+            out += "\n\n[timeout] Terminated displayplacer after 10s without completing."
         }
         let apply = Self.parseApplyCommand(fromListOutput: out)
         if let apply {

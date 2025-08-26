@@ -7,99 +7,6 @@ import Combine
 // Class to monitor display changes
 class DisplayMonitor: ObservableObject {
     @Published var displayMessage: String = ""
-    private var previousScreens: [NSScreen] = []
-    
-    init() {
-        // Save initial screen information
-        previousScreens = NSScreen.screens
-        
-        // Register for screen change notifications
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(screenParametersDidChange),
-            name: NSApplication.didChangeScreenParametersNotification,
-            object: nil
-        )
-    }
-    
-    deinit {
-        NotificationCenter.default.removeObserver(self)
-    }
-    
-    @objc private func screenParametersDidChange() {
-        let currentScreens = NSScreen.screens
-        
-        // Check for connected or disconnected displays
-        if currentScreens.count > previousScreens.count {
-            // Display connected
-            let newScreens = findNewScreens(currentScreens: currentScreens)
-            let details = getScreenDetails(for: newScreens)
-            displayMessage = "[\(formattedDate())] Display connected: \(details)"
-        } else if currentScreens.count < previousScreens.count {
-            // Display disconnected
-            displayMessage = "[\(formattedDate())] Display disconnected. Total displays now: \(currentScreens.count)"
-        } else {
-            // Same number but something changed (resolution, etc.)
-            let changedScreens = findChangedScreens(oldScreens: previousScreens, newScreens: currentScreens)
-            if !changedScreens.isEmpty {
-                let details = getScreenDetails(for: changedScreens)
-                displayMessage = "[\(formattedDate())] Display settings changed: \(details)"
-            }
-        }
-        
-        // Update previous screens for next comparison
-        previousScreens = currentScreens
-    }
-    
-    private func findNewScreens(currentScreens: [NSScreen]) -> [NSScreen] {
-        // This is simplified - in a real implementation you would need a better way to identify screens
-        if currentScreens.count > previousScreens.count {
-            // Just return the last screen as the new one (this is a simplification)
-            if let lastScreen = currentScreens.last {
-                return [lastScreen]
-            }
-        }
-        return []
-    }
-    
-    private func findChangedScreens(oldScreens: [NSScreen], newScreens: [NSScreen]) -> [NSScreen] {
-        // For simplicity, we'll just check the main screen for changes
-        // In a real implementation, you would need to track each screen by ID
-        if let oldMain = oldScreens.first,
-           let newMain = newScreens.first,
-           oldMain.frame != newMain.frame {
-            return [newMain]
-        }
-        return []
-    }
-    
-    private func getScreenDetails(for screens: [NSScreen]) -> String {
-        var details: [String] = []
-        
-        for screen in screens {
-            let frame = screen.frame
-            let colorSpace = screen.colorSpace?.localizedName ?? "Unknown"
-            let resolution = "\(Int(frame.width))×\(Int(frame.height))"
-            let depth = screen.depth
-            let isMain = screen == NSScreen.main ? "Yes" : "No"
-            
-            details.append("""
-            Screen \(isMain == "Yes" ? "(Main)" : ""):
-              Resolution: \(resolution)
-              Color Space: \(colorSpace)
-              Depth: \(depth)
-              Scale Factor: \(screen.backingScaleFactor)
-            """)
-        }
-        
-        return details.joined(separator: "\n")
-    }
-    
-    private func formattedDate() -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss"
-        return formatter.string(from: Date())
-    }
 }
 
 struct ContentView: View {
@@ -114,6 +21,7 @@ struct ContentView: View {
     private let defaults = UserDefaults.standard
     private let kAutoRun = "AutoRunEnabled"
     private let kDebounce = "DebounceSeconds"
+    private let kSavedCmd = "DisplayplacerSavedCommand"
 
     init(showWindow: Binding<Bool>) {
         self._showWindow = showWindow
@@ -124,20 +32,84 @@ struct ContentView: View {
         self._debounceSeconds = State(initialValue: debounce)
     }
 
-    var body: some View {
-        VStack(spacing: 20) {
-            Text("Service Controller")
-                .font(.title)
+    // MARK: - displayplacer helpers (local)
+    private func displayplacerURL() -> URL? {
+        if let url = Bundle.main.url(forAuxiliaryExecutable: "displayplacer") { return url }
+        if let res = Bundle.main.resourceURL?.appendingPathComponent("displayplacer"), FileManager.default.isExecutableFile(atPath: res.path) { return res }
+        let brewArm = URL(fileURLWithPath: "/opt/homebrew/bin/displayplacer")
+        if FileManager.default.isExecutableFile(atPath: brewArm.path) { return brewArm }
+        let brewIntel = URL(fileURLWithPath: "/usr/local/bin/displayplacer")
+        if FileManager.default.isExecutableFile(atPath: brewIntel.path) { return brewIntel }
+        return nil
+    }
+    
+    private func captureWithDisplayplacer() -> (code: Int32, output: String, applyCmd: String?) {
+        guard let dp = displayplacerURL() else { return (-1, "displayplacer not found in bundle or Homebrew paths", nil) }
+        let task = Process(); let pipe = Pipe()
+        task.standardOutput = pipe; task.standardError = pipe
+        task.executableURL = dp; task.arguments = ["list"]
+        do { try task.run() } catch { return (-1, "Failed to run displayplacer: \(error.localizedDescription)", nil) }
+        var didTimeout = false
+        let timer = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
+        timer.schedule(deadline: .now() + 10)
+        timer.setEventHandler { if task.isRunning { didTimeout = true; task.terminate() } }
+        timer.resume()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        task.waitUntilExit(); timer.cancel()
+        var out = String(data: data, encoding: .utf8) ?? ""
+        if didTimeout { out += "\n\n[timeout] displayplacer list terminated after 10s." }
+        let apply = parseApplyCommand(fromListOutput: out)
+        if let apply { UserDefaults.standard.set(apply, forKey: kSavedCmd) }
+        return (task.terminationStatus, out, apply)
+    }
+    
+    private func parseApplyCommand(fromListOutput out: String) -> String? {
+        guard let range = out.range(of: "displayplacer ", options: [.backwards]) else { return nil }
+        var cmd = String(out[range.lowerBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        if let emptyRange = cmd.range(of: "\n\n") { cmd = String(cmd[..<emptyRange.lowerBound]) }
+        return cmd
+    }
+    
+    private func savedApplyCommand() -> String? {
+        UserDefaults.standard.string(forKey: kSavedCmd)?.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    
+    private func buildInnerApplyShellLine() -> String? {
+        guard var saved = savedApplyCommand(), let dp = displayplacerURL() else { return nil }
+        if let r = saved.range(of: "^\\s*displayplacer\\b", options: .regularExpression) {
+            saved.replaceSubrange(r, with: "\"\(dp.path)\"")
+        }
+        return saved
+    }
+    
+    private func applySavedLayout() -> (code: Int32, output: String) {
+        guard let inner = buildInnerApplyShellLine() else { return (-1, "No saved layout or displayplacer not found") }
+        let task = Process(); let pipe = Pipe()
+        task.standardOutput = pipe; task.standardError = pipe
+        task.executableURL = URL(fileURLWithPath: "/bin/zsh"); task.arguments = ["-f", "-c", inner]
+        do { try task.run() } catch { return (-1, "Failed to launch zsh: \(error.localizedDescription)") }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile(); task.waitUntilExit()
+        let out = String(data: data, encoding: .utf8) ?? ""
+        return (task.terminationStatus, out)
+    }
+    
+    private func buildDryRunApplyCommand() -> String? {
+        guard let inner = buildInnerApplyShellLine() else { return nil }
+        return "/bin/zsh -f -c \"\(inner.replacingOccurrences(of: "\"", with: "\\\""))\""
+    }
 
-            // Large Auto-Run toggle button
+    var body: some View {
+        VStack(spacing: 16) {
+            // Title
+            Text("Service Controller").font(.title)
+
+            // Auto-Run toggle
             Button(action: {
-                autoRunEnabled.toggle()
-                defaults.set(autoRunEnabled, forKey: kAutoRun)
+                autoRunEnabled.toggle(); defaults.set(autoRunEnabled, forKey: kAutoRun)
             }) {
                 HStack(spacing: 8) {
                     Image(systemName: autoRunEnabled ? "play.circle.fill" : "pause.circle")
-                    Text(autoRunEnabled ? "Auto-Run: ON" : "Auto-Run: OFF")
-                        .font(.headline)
+                    Text(autoRunEnabled ? "Auto-Run: ON" : "Auto-Run: OFF").font(.headline)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 8)
@@ -147,25 +119,51 @@ struct ContentView: View {
             .tint(autoRunEnabled ? .green : .gray)
             .help("Toggle automatic layout application on display change")
 
-            // Manual controls (displayplacer only)
+            // Manual controls
             HStack(spacing: 8) {
                 let hasDP = (Bundle.main.url(forAuxiliaryExecutable: "displayplacer") != nil)
                     || ((Bundle.main.resourceURL?.appendingPathComponent("displayplacer").path).map { FileManager.default.isExecutableFile(atPath: $0) } ?? false)
                     || FileManager.default.isExecutableFile(atPath: "/opt/homebrew/bin/displayplacer")
                     || FileManager.default.isExecutableFile(atPath: "/usr/local/bin/displayplacer")
-                let hasSaved = (UserDefaults.standard.string(forKey: "DisplayplacerSavedCommand")?.isEmpty == false)
+                let hasSaved = (UserDefaults.standard.string(forKey: kSavedCmd)?.isEmpty == false)
+
                 Button("Capture Now") {
-                    (NSApp.delegate as? AppDelegate)?.captureLayout()
+                    let entry = "[\(formattedDate())] Starting capture…"
+                    outputText = outputText.isEmpty ? entry : "\(entry)\n\n\(outputText)"
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        let res = captureWithDisplayplacer()
+                        DispatchQueue.main.async {
+                            let direct = "[\(formattedDate())] Capture completed (code=\(res.code))\n\(res.output)\n\n" + (res.applyCmd != nil ? "Saved apply command:\n\(res.applyCmd!)" : "No apply command found in output")
+                            outputText = outputText.isEmpty ? direct : "\(direct)\n\n\(outputText)"
+                            NotificationCenter.default.post(name: .displayScriptDidRun, object: nil, userInfo: [
+                                "mode": "capture", "code": res.code,
+                                "output": res.output + (res.applyCmd != nil ? "\n\nSaved apply command:\n\(res.applyCmd!)" : "\n\nNo apply command found in output")
+                            ])
+                        }
+                    }
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(!hasDP)
+
                 Button("Apply Layout") {
-                    (NSApp.delegate as? AppDelegate)?.applyLayout()
+                    let entry = "[\(formattedDate())] Starting apply…"
+                    outputText = outputText.isEmpty ? entry : "\(entry)\n\n\(outputText)"
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        let res = applySavedLayout()
+                        DispatchQueue.main.async {
+                            let direct = "[\(formattedDate())] Apply completed (code=\(res.code))\n\(res.output)"
+                            outputText = outputText.isEmpty ? direct : "\(direct)\n\n\(outputText)"
+                            NotificationCenter.default.post(name: .displayScriptDidRun, object: nil, userInfo: [
+                                "mode": "apply", "code": res.code, "output": res.output
+                            ])
+                        }
+                    }
                 }
                 .buttonStyle(.bordered)
                 .disabled(!(hasDP && hasSaved))
+
                 Button("Dry Run Apply") {
-                    if let cmd = (NSApp.delegate as? AppDelegate)?.buildDryRunApplyCommand() {
+                    if let cmd = buildDryRunApplyCommand() {
                         let entry = "[\(formattedDate())] Dry run (apply) command\n\(cmd)"
                         outputText = outputText.isEmpty ? entry : "\(entry)\n\n\(outputText)"
                     } else {
@@ -178,29 +176,23 @@ struct ContentView: View {
                 Spacer()
             }
 
-            // Debounce and status
+            // Debounce
             HStack(spacing: 8) {
-                Text("Debounce:")
-                    .font(.callout)
-                    .foregroundColor(.secondary)
+                Text("Debounce:").font(.callout).foregroundColor(.secondary)
                 Stepper(value: $debounceSeconds, in: 0...10, step: 0.5) {
-                    Text(String(format: "%.1f s", debounceSeconds))
-                        .font(.callout)
+                    Text(String(format: "%.1f s", debounceSeconds)).font(.callout)
                 }
-                .onChange(of: debounceSeconds) { _, newValue in
-                    defaults.set(newValue, forKey: kDebounce)
-                }
+                .onChange(of: debounceSeconds) { _, v in defaults.set(v, forKey: kDebounce) }
                 Spacer()
             }
 
             // Log controls
             HStack {
                 Spacer()
-                Button("Clear Log") { outputText = "" }
-                    .buttonStyle(.bordered)
+                Button("Clear Log") { outputText = "" }.buttonStyle(.bordered)
             }
 
-            // Output text box
+            // Output text box with background and border (visual depth)
             ScrollView {
                 Text(outputText)
                     .font(.system(.body, design: .monospaced))
@@ -209,48 +201,20 @@ struct ContentView: View {
                     .textSelection(.enabled)
             }
             .frame(maxWidth: .infinity)
-            .frame(minHeight: 200, maxHeight: .infinity)
+            .frame(minHeight: 240, maxHeight: .infinity)
             .background(Color(NSColor.textBackgroundColor))
-            .cornerRadius(4)
-            .overlay(
-                RoundedRectangle(cornerRadius: 4)
-                    .stroke(Color.gray.opacity(0.5), lineWidth: 1)
-            )
+            .cornerRadius(6)
+            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.gray.opacity(0.5), lineWidth: 1))
 
             Button("Hide Window") { WindowController.shared.hideWindow() }
-                .padding(.top, 10)
+                .padding(.top, 8)
         }
-        .frame(minWidth: 520, minHeight: 520)
-        .padding()
+        .frame(minWidth: 700, minHeight: 560)
+        .padding(16)
         .onAppear {
             let screenDetails = getInitialScreenDetails()
             outputText = "[\(formattedDate())] Application started.\nCurrent displays:\n\(screenDetails)"
         }
-        .onReceive(displayMonitor.$displayMessage
-            .debounce(for: .seconds(debounceSeconds), scheduler: RunLoop.main)) { newMessage in
-            if !newMessage.isEmpty {
-                outputText = outputText.isEmpty ? newMessage : "\(newMessage)\n\n\(outputText)"
-                if autoRunEnabled, !isRunningScript {
-                    isRunningScript = true
-                    DispatchQueue.global(qos: .utility).async {
-                        if let res = (NSApp.delegate as? AppDelegate)?.applySavedLayout() {
-                            DispatchQueue.main.async {
-                                let entry = "[\(formattedDate())] Applied display layout (auto)\nExit code: \(res.code)\n\(res.output)"
-                                outputText = outputText.isEmpty ? entry : "\(entry)\n\n\(outputText)"
-                                isRunningScript = false
-                            }
-                        } else {
-                            DispatchQueue.main.async {
-                                let entry = "[\(formattedDate())] Auto-run skipped: no saved layout or displayplacer not found"
-                                outputText = outputText.isEmpty ? entry : "\(entry)\n\n\(outputText)"
-                                isRunningScript = false
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        // Listen for capture/apply notifications to log into the message box
         .onReceive(NotificationCenter.default.publisher(for: .displayScriptDidRun)) { note in
             let mode = (note.userInfo?["mode"] as? String) ?? "?"
             let code = (note.userInfo?["code"] as? Int32) ?? -999
@@ -258,35 +222,27 @@ struct ContentView: View {
             let entry = "[\(formattedDate())] \(mode.capitalized) completed (code=\(code))\n\(output)"
             outputText = outputText.isEmpty ? entry : "\(entry)\n\n\(outputText)"
         }
-        // Keep in sync with Dock/Menu toggles
         .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)) { _ in
             let v = defaults.object(forKey: kAutoRun) as? Bool ?? true
             if v != autoRunEnabled { autoRunEnabled = v }
         }
     }
 
-    // Get initial screen details
+    // MARK: - Helpers
+    private func formattedDate() -> String {
+        let formatter = DateFormatter(); formatter.dateFormat = "HH:mm:ss"; return formatter.string(from: Date())
+    }
+    
     private func getInitialScreenDetails() -> String {
         var details: [String] = []
-        
         for (index, screen) in NSScreen.screens.enumerated() {
             let frame = screen.frame
             let resolution = "\(Int(frame.width))×\(Int(frame.height))"
             let isMain = (screen == NSScreen.main) ? "(Main)" : ""
-            
             details.append("Display \(index + 1) \(isMain): \(resolution) @ \(screen.backingScaleFactor)x")
         }
-        
         return details.isEmpty ? "No displays detected" : details.joined(separator: "\n")
-    }
-    
-    private func formattedDate() -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss"
-        return formatter.string(from: Date())
     }
 }
 
-#Preview {
-    ContentView(showWindow: .constant(true))
-}
+#Preview { ContentView(showWindow: .constant(true)) }
