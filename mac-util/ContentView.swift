@@ -1,6 +1,8 @@
 import SwiftUI
 import Foundation
 import AppKit
+import UniformTypeIdentifiers
+import Combine
 
 // Class to monitor display changes
 class DisplayMonitor: ObservableObject {
@@ -104,32 +106,110 @@ struct ContentView: View {
     @Binding var showWindow: Bool
     @State private var outputText: String = "Output will appear here..."
     @StateObject private var displayMonitor = DisplayMonitor()
-    
+    // Preferences
+    @State private var isRunningScript: Bool = false
+    @State private var autoRunEnabled: Bool
+    @State private var debounceSeconds: Double
+
+    private let defaults = UserDefaults.standard
+    private let kAutoRun = "AutoRunEnabled"
+    private let kDebounce = "DebounceSeconds"
+
+    init(showWindow: Binding<Bool>) {
+        self._showWindow = showWindow
+        let defaults = UserDefaults.standard
+        let autoRun = defaults.object(forKey: kAutoRun) as? Bool ?? true
+        let debounce = defaults.object(forKey: kDebounce) as? Double ?? 1.0
+        self._autoRunEnabled = State(initialValue: autoRun)
+        self._debounceSeconds = State(initialValue: debounce)
+    }
+
     var body: some View {
         VStack(spacing: 20) {
             Text("Service Controller")
                 .font(.title)
 
-            Button("Start Service") {
-                let result = runShellCommand("launchctl load /Library/LaunchDaemons/com.example.service.plist")
-                outputText = "Starting service...\n\(result)"
+            // Large Auto-Run toggle button
+            Button(action: {
+                autoRunEnabled.toggle()
+                defaults.set(autoRunEnabled, forKey: kAutoRun)
+            }) {
+                HStack(spacing: 8) {
+                    Image(systemName: autoRunEnabled ? "play.circle.fill" : "pause.circle")
+                    Text(autoRunEnabled ? "Auto-Run: ON" : "Auto-Run: OFF")
+                        .font(.headline)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
             }
             .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .tint(autoRunEnabled ? .green : .gray)
+            .help("Toggle automatic layout application on display change")
 
-            Button("Stop Service") {
-                let result = runShellCommand("launchctl unload /Library/LaunchDaemons/com.example.service.plist")
-                outputText = "Stopping service...\n\(result)"
+            // Manual controls (displayplacer only)
+            HStack(spacing: 8) {
+                let hasDP = (Bundle.main.url(forAuxiliaryExecutable: "displayplacer") != nil)
+                    || ((Bundle.main.resourceURL?.appendingPathComponent("displayplacer").path).map { FileManager.default.isExecutableFile(atPath: $0) } ?? false)
+                    || FileManager.default.isExecutableFile(atPath: "/opt/homebrew/bin/displayplacer")
+                    || FileManager.default.isExecutableFile(atPath: "/usr/local/bin/displayplacer")
+                let hasSaved = (UserDefaults.standard.string(forKey: "DisplayplacerSavedCommand")?.isEmpty == false)
+                Button("Capture Now") {
+                    (NSApp.delegate as? AppDelegate)?.captureLayout()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!hasDP)
+                Button("Apply Layout") {
+                    (NSApp.delegate as? AppDelegate)?.applyLayout()
+                }
+                .buttonStyle(.bordered)
+                .disabled(!(hasDP && hasSaved))
+                Button("Dry Run Apply") {
+                    if let cmd = (NSApp.delegate as? AppDelegate)?.buildDryRunApplyCommand() {
+                        let entry = "[\(formattedDate())] Dry run (apply) command\n\(cmd)"
+                        outputText = outputText.isEmpty ? entry : "\(entry)\n\n\(outputText)"
+                    } else {
+                        let entry = "[\(formattedDate())] No saved layout or displayplacer not found"
+                        outputText = outputText.isEmpty ? entry : "\(entry)\n\n\(outputText)"
+                    }
+                }
+                .buttonStyle(.bordered)
+                .disabled(!(hasDP && hasSaved))
+                Spacer()
             }
-            .buttonStyle(.bordered)
-            
+
+            // Debounce and status
+            HStack(spacing: 8) {
+                Text("Debounce:")
+                    .font(.callout)
+                    .foregroundColor(.secondary)
+                Stepper(value: $debounceSeconds, in: 0...10, step: 0.5) {
+                    Text(String(format: "%.1f s", debounceSeconds))
+                        .font(.callout)
+                }
+                .onChange(of: debounceSeconds) { _, newValue in
+                    defaults.set(newValue, forKey: kDebounce)
+                }
+                Spacer()
+            }
+
+            // Log controls
+            HStack {
+                Spacer()
+                Button("Clear Log") { outputText = "" }
+                    .buttonStyle(.bordered)
+            }
+
             // Output text box
             ScrollView {
                 Text(outputText)
                     .font(.system(.body, design: .monospaced))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(8)
+                    .textSelection(.enabled)
             }
-            .frame(height: 120)
+            .frame(maxWidth: .infinity)
+            .frame(minHeight: 200, maxHeight: .infinity)
             .background(Color(NSColor.textBackgroundColor))
             .cornerRadius(4)
             .overlay(
@@ -137,26 +217,54 @@ struct ContentView: View {
                     .stroke(Color.gray.opacity(0.5), lineWidth: 1)
             )
 
-            Button("Hide Window") {
-                WindowController.shared.hideWindow()
-            }
-            .padding(.top, 10)
+            Button("Hide Window") { WindowController.shared.hideWindow() }
+                .padding(.top, 10)
         }
-        .frame(width: 400, height: 350)
+        .frame(minWidth: 520, minHeight: 520)
         .padding()
         .onAppear {
-            // Log initial screen info
             let screenDetails = getInitialScreenDetails()
             outputText = "[\(formattedDate())] Application started.\nCurrent displays:\n\(screenDetails)"
         }
-        .onReceive(displayMonitor.$displayMessage) { newMessage in
+        .onReceive(displayMonitor.$displayMessage
+            .debounce(for: .seconds(debounceSeconds), scheduler: RunLoop.main)) { newMessage in
             if !newMessage.isEmpty {
-                // Append new messages to the output text
-                outputText = "\(outputText)\n\n\(newMessage)"
+                outputText = outputText.isEmpty ? newMessage : "\(newMessage)\n\n\(outputText)"
+                if autoRunEnabled, !isRunningScript {
+                    isRunningScript = true
+                    DispatchQueue.global(qos: .utility).async {
+                        if let res = (NSApp.delegate as? AppDelegate)?.applySavedLayout() {
+                            DispatchQueue.main.async {
+                                let entry = "[\(formattedDate())] Applied display layout (auto)\nExit code: \(res.code)\n\(res.output)"
+                                outputText = outputText.isEmpty ? entry : "\(entry)\n\n\(outputText)"
+                                isRunningScript = false
+                            }
+                        } else {
+                            DispatchQueue.main.async {
+                                let entry = "[\(formattedDate())] Auto-run skipped: no saved layout or displayplacer not found"
+                                outputText = outputText.isEmpty ? entry : "\(entry)\n\n\(outputText)"
+                                isRunningScript = false
+                            }
+                        }
+                    }
+                }
             }
         }
+        // Listen for capture/apply notifications to log into the message box
+        .onReceive(NotificationCenter.default.publisher(for: .displayScriptDidRun)) { note in
+            let mode = (note.userInfo?["mode"] as? String) ?? "?"
+            let code = (note.userInfo?["code"] as? Int32) ?? -999
+            let output = (note.userInfo?["output"] as? String) ?? ""
+            let entry = "[\(formattedDate())] \(mode.capitalized) completed (code=\(code))\n\(output)"
+            outputText = outputText.isEmpty ? entry : "\(entry)\n\n\(outputText)"
+        }
+        // Keep in sync with Dock/Menu toggles
+        .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)) { _ in
+            let v = defaults.object(forKey: kAutoRun) as? Bool ?? true
+            if v != autoRunEnabled { autoRunEnabled = v }
+        }
     }
-    
+
     // Get initial screen details
     private func getInitialScreenDetails() -> String {
         var details: [String] = []
@@ -172,35 +280,10 @@ struct ContentView: View {
         return details.isEmpty ? "No displays detected" : details.joined(separator: "\n")
     }
     
-    // Helper function for formatted date
     private func formattedDate() -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm:ss"
         return formatter.string(from: Date())
-    }
-
-    // Run shell command with proper privileges and return output
-    func runShellCommand(_ command: String) -> String {
-        let task = Process()
-        let pipe = Pipe()
-        
-        task.standardOutput = pipe
-        task.standardError = pipe
-        task.launchPath = "/bin/zsh"
-        task.arguments = ["-c", command]
-        
-        do {
-            try task.run()
-            
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            let output = String(data: data, encoding: .utf8) ?? "No output"
-            
-            task.waitUntilExit()
-            
-            return "Exit code: \(task.terminationStatus)\n\(output)"
-        } catch {
-            return "Error: \(error.localizedDescription)"
-        }
     }
 }
 
