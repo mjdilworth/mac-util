@@ -7,6 +7,34 @@ import Combine
 // Class to monitor display changes
 class DisplayMonitor: ObservableObject {
     @Published var displayMessage: String = ""
+    private var previousScreens: [NSScreen] = NSScreen.screens
+    
+    init() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(screenParametersDidChange),
+            name: NSApplication.didChangeScreenParametersNotification,
+            object: nil
+        )
+    }
+    
+    deinit { NotificationCenter.default.removeObserver(self) }
+    
+    @objc private func screenParametersDidChange() {
+        let current = NSScreen.screens
+        var summary = "Display configuration changed (" + formattedDate() + ")"
+        if current.count != previousScreens.count {
+            summary += ": count \(previousScreens.count) -> \(current.count)"
+        } else {
+            summary += ": parameters updated"
+        }
+        previousScreens = current
+        displayMessage = summary
+    }
+    
+    private func formattedDate() -> String {
+        let f = DateFormatter(); f.dateFormat = "HH:mm:ss"; return f.string(from: Date())
+    }
 }
 
 struct ContentView: View {
@@ -214,6 +242,23 @@ struct ContentView: View {
         .onAppear {
             let screenDetails = getInitialScreenDetails()
             outputText = "[\(formattedDate())] Application started.\nCurrent displays:\n\(screenDetails)"
+        }
+        // Debounced screen-change auto-apply
+        .onReceive(displayMonitor.$displayMessage
+            .debounce(for: .seconds(debounceSeconds), scheduler: RunLoop.main)) { msg in
+                guard !msg.isEmpty else { return }
+                let note = "[\(formattedDate())] \(msg)"
+                outputText = outputText.isEmpty ? note : "\(note)\n\n\(outputText)"
+                guard autoRunEnabled, !isRunningScript else { return }
+                isRunningScript = true
+                DispatchQueue.global(qos: .utility).async {
+                    let res = applySavedLayout()
+                    DispatchQueue.main.async {
+                        let entry = "[\(formattedDate())] Applied display layout (auto)\nExit code: \(res.code)\n\(res.output)"
+                        outputText = outputText.isEmpty ? entry : "\(entry)\n\n\(outputText)"
+                        isRunningScript = false
+                    }
+                }
         }
         .onReceive(NotificationCenter.default.publisher(for: .displayScriptDidRun)) { note in
             let mode = (note.userInfo?["mode"] as? String) ?? "?"
