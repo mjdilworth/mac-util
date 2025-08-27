@@ -69,18 +69,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private let kSavedCmd = "DisplayplacerSavedCommand"
     
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.regular)
-        
-        // Show window immediately on app launch
+        NSApp.setActivationPolicy(.accessory)
+        // Show the main window on launch
         DispatchQueue.main.async {
             WindowController.shared.createAndShowWindow()
         }
+        
+        // Don't show window immediately on app launch for menu bar apps
+        // Window can still be shown from the menu bar item
         
         // NOTE: We've disabled the automatic permission request on startup
         // as it can cause issues. The user can use the "Test Apple Events Permission"
         // button in the UI instead.
     }
     
+    // Return false to prevent app termination when windows are closed
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         return false
     }
@@ -232,43 +235,62 @@ struct DillyApp: App {
     // Observe defaults for menu reactivity
     @AppStorage("AutoRunEnabled") private var autoRunEnabled: Bool = true
     
+    // Helper functions to check availability of displayplacer and saved commands
+    private func hasDisplayplacer() -> Bool {
+        return (Bundle.main.url(forAuxiliaryExecutable: "displayplacer") != nil)
+            || ((Bundle.main.resourceURL?.appendingPathComponent("displayplacer").path)
+                .map { FileManager.default.isExecutableFile(atPath: $0) } ?? false)
+            || FileManager.default.isExecutableFile(atPath: "/opt/homebrew/bin/displayplacer")
+            || FileManager.default.isExecutableFile(atPath: "/usr/local/bin/displayplacer")
+    }
+    
+    private func hasSavedCommand() -> Bool {
+        return (UserDefaults.standard.string(forKey: "DisplayplacerSavedCommand")?.isEmpty == false)
+    }
+    
     var body: some Scene {
-        // Menu bar item
-        MenuBarExtra("ServiceCtl", systemImage: "gearshape") {
-            let hasDP = (Bundle.main.url(forAuxiliaryExecutable: "displayplacer") != nil)
-                || ((Bundle.main.resourceURL?.appendingPathComponent("displayplacer").path).map { FileManager.default.isExecutableFile(atPath: $0) } ?? false)
-                || FileManager.default.isExecutableFile(atPath: "/opt/homebrew/bin/displayplacer")
-                || FileManager.default.isExecutableFile(atPath: "/usr/local/bin/displayplacer")
-            let hasSaved = (UserDefaults.standard.string(forKey: "DisplayplacerSavedCommand")?.isEmpty == false)
-            Button(autoRunEnabled ? "Disable Auto-Run" : "Enable Auto-Run") {
-                autoRunEnabled.toggle()
+        // Menu bar item with guaranteed system icon
+        MenuBarExtra("Display Controller", systemImage: "display") {
+            VStack(alignment: .leading, spacing: 5) {
+                Button(autoRunEnabled ? "Disable Auto-Run" : "Enable Auto-Run") {
+                    autoRunEnabled.toggle()
+                }
+                .disabled(!hasDisplayplacer())
+                
+                Divider()
+                
+                Button("Capture Display Layout") {
+                    let res = appDelegate.captureWithDisplayplacer()
+                    NotificationCenter.default.post(name: .displayScriptDidRun, object: nil, userInfo: [
+                        "mode": "capture",
+                        "code": res.code,
+                        "output": res.output + (res.applyCmd != nil ? "\n\nSaved apply command:\n\(res.applyCmd!)" : "\n\nNo apply command found in output")
+                    ])
+                }
+                .disabled(!hasDisplayplacer())
+                
+                Button("Apply Display Layout") {
+                    let res = appDelegate.applySavedLayout()
+                    NotificationCenter.default.post(name: .displayScriptDidRun, object: nil, userInfo: [
+                        "mode": "apply",
+                        "code": res.code,
+                        "output": res.output
+                    ])
+                }
+                .disabled(!(hasDisplayplacer() && hasSavedCommand()))
+                
+                Divider()
+                
+                Button(windowController.isWindowVisible ? "Hide Window" : "Show Window") {
+                    windowController.toggleWindow()
+                }
+                
+                Divider()
+                
+                Button("Quit") {
+                    NSApplication.shared.terminate(nil)
+                }
             }
-            .disabled(!hasDP)
-            Divider()
-            Button("Capture Display Layout") {
-                let res = appDelegate.captureWithDisplayplacer()
-                NotificationCenter.default.post(name: .displayScriptDidRun, object: nil, userInfo: [
-                    "mode": "capture",
-                    "code": res.code,
-                    "output": res.output + (res.applyCmd != nil ? "\n\nSaved apply command:\n\(res.applyCmd!)" : "\n\nNo apply command found in output")
-                ])
-            }
-            .disabled(!hasDP)
-            Button("Apply Display Layout") {
-                let res = appDelegate.applySavedLayout()
-                NotificationCenter.default.post(name: .displayScriptDidRun, object: nil, userInfo: [
-                    "mode": "apply",
-                    "code": res.code,
-                    "output": res.output
-                ])
-            }
-            .disabled(!(hasDP && hasSaved))
-            Divider()
-            Button(windowController.isWindowVisible ? "Hide Window" : "Show Window") {
-                windowController.toggleWindow()
-            }
-            Divider()
-            Button("Quit") { NSApplication.shared.terminate(nil) }
         }
     }
 }
