@@ -14,10 +14,6 @@
 	<string>1</string>
 	<key>CFBundleShortVersionString</key>
 	<string>1.0</string>
-	<key>CFBundleExecutable</key>
-	<string>mac-util</string>
-	<key>LSApplicationCategoryType</key>
-	<string>public.app-category.utilities</string>
 	<key>NSAppleEventsUsageDescription</key>
 	<string>This app needs permission to run scripts with administrator privileges</string>
 	<key>LSUIElement</key>
