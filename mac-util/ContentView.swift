@@ -45,6 +45,10 @@ struct ContentView: View {
     @State private var isRunningScript: Bool = false
     @State private var autoRunEnabled: Bool
     @State private var debounceSeconds: Double
+    // Editor state
+    @State private var isEditorPresented: Bool = false
+    @State private var editorText: String = ""
+    @State private var editorError: String? = nil
 
     private let defaults = UserDefaults.standard
     private let kAutoRun = "AutoRunEnabled"
@@ -100,6 +104,23 @@ struct ContentView: View {
     
     private func savedApplyCommand() -> String? {
         UserDefaults.standard.string(forKey: kSavedCmd)?.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    // Normalize and save/clear helpers for editor
+    private func normalizeSavedCommand(_ text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        if trimmed.range(of: "^\\s*displayplacer\\b", options: .regularExpression) != nil { return trimmed }
+        return "displayplacer " + trimmed
+    }
+    
+    private func setSavedApplyCommand(_ cmd: String?) {
+        let trimmed = cmd?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if trimmed.isEmpty {
+            defaults.removeObject(forKey: kSavedCmd)
+        } else {
+            defaults.set(trimmed, forKey: kSavedCmd)
+        }
     }
     
     private func buildInnerApplyShellLine() -> String? {
@@ -201,6 +222,21 @@ struct ContentView: View {
                 }
                 .buttonStyle(.bordered)
                 .disabled(!(hasDP && hasSaved))
+
+                Button("Edit Saved Layout") {
+                    editorText = savedApplyCommand() ?? "displayplacer "
+                    editorError = nil
+                    isEditorPresented = true
+                }
+                .buttonStyle(.bordered)
+
+                Button("Clear Saved", role: .destructive) {
+                    setSavedApplyCommand(nil)
+                    let entry = "[\(formattedDate())] Cleared saved display layout"
+                    outputText = outputText.isEmpty ? entry : "\(entry)\n\n\(outputText)"
+                }
+                .buttonStyle(.bordered)
+                .disabled(!hasSaved)
                 Spacer()
             }
 
@@ -270,6 +306,45 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)) { _ in
             let v = defaults.object(forKey: kAutoRun) as? Bool ?? true
             if v != autoRunEnabled { autoRunEnabled = v }
+        }
+        // Editor sheet for saved layout
+        .sheet(isPresented: $isEditorPresented) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Edit Saved Display Layout").font(.headline)
+                Text("Enter the full displayplacer command. You can paste from 'Capture Now'.").font(.callout).foregroundColor(.secondary)
+                TextEditor(text: $editorText)
+                    .font(.system(.body, design: .monospaced))
+                    .frame(minHeight: 200)
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.gray.opacity(0.3)))
+                if let err = editorError {
+                    Text(err).foregroundColor(.red).font(.footnote)
+                }
+                HStack {
+                    Button("Cancel") { isEditorPresented = false }
+                    Spacer()
+                    Button("Clear", role: .destructive) {
+                        setSavedApplyCommand(nil)
+                        editorText = ""
+                        let entry = "[\(formattedDate())] Cleared saved display layout"
+                        outputText = outputText.isEmpty ? entry : "\(entry)\n\n\(outputText)"
+                        isEditorPresented = false
+                    }
+                    Button("Save") {
+                        let normalized = normalizeSavedCommand(editorText)
+                        if normalized.isEmpty {
+                            editorError = "Command cannot be empty."
+                            return
+                        }
+                        setSavedApplyCommand(normalized)
+                        let entry = "[\(formattedDate())] Saved display layout updated"
+                        outputText = outputText.isEmpty ? entry : "\(entry)\n\n\(outputText)"
+                        isEditorPresented = false
+                    }
+                    .keyboardShortcut(.defaultAction)
+                }
+            }
+            .padding(16)
+            .frame(minWidth: 640, minHeight: 340)
         }
     }
 
