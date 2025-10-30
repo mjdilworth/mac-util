@@ -50,6 +50,9 @@ struct ContentView: View {
     @State private var isEditorPresented: Bool = false
     @State private var editorText: String = ""
     @State private var editorError: String? = nil
+    // File save/load state
+    @State private var isExporting: Bool = false
+    @State private var isImporting: Bool = false
 
     private let defaults = UserDefaults.standard
     private let kAutoRun = "AutoRunEnabled"
@@ -238,6 +241,20 @@ struct ContentView: View {
                 }
                 .buttonStyle(.bordered)
                 .disabled(!hasSaved)
+                
+                Button("Save to Disk…") {
+                    isExporting = true
+                }
+                .buttonStyle(.bordered)
+                .disabled(!hasSaved)
+                .help("Export saved layout to a file")
+                
+                Button("Load from Disk…") {
+                    isImporting = true
+                }
+                .buttonStyle(.bordered)
+                .help("Import layout from a file")
+                
                 Spacer()
             }
 
@@ -346,6 +363,79 @@ struct ContentView: View {
             }
             .padding(16)
             .frame(minWidth: 640, minHeight: 340)
+        }
+        // File export dialog
+        .onChange(of: isExporting) { _, exporting in
+            if exporting {
+                exportLayoutToFile()
+                isExporting = false
+            }
+        }
+        // File import dialog
+        .onChange(of: isImporting) { _, importing in
+            if importing {
+                importLayoutFromFile()
+                isImporting = false
+            }
+        }
+    }
+    
+    // MARK: - File Export/Import
+    
+    private func exportLayoutToFile() {
+        guard let command = savedApplyCommand() else {
+            let entry = "[\(formattedDate())] No saved layout to export"
+            outputText = outputText.isEmpty ? entry : "\(entry)\n\n\(outputText)"
+            return
+        }
+        
+        let savePanel = NSSavePanel()
+        savePanel.title = "Save Display Layout"
+        savePanel.nameFieldStringValue = "DisplayLayout.txt"
+        savePanel.allowedContentTypes = [UTType.plainText]
+        savePanel.canCreateDirectories = true
+        
+        savePanel.begin { response in
+            guard response == .OK, let url = savePanel.url else { return }
+            
+            do {
+                try command.write(to: url, atomically: true, encoding: .utf8)
+                let entry = "[\(formattedDate())] Exported layout to: \(url.path)"
+                outputText = outputText.isEmpty ? entry : "\(entry)\n\n\(outputText)"
+            } catch {
+                let entry = "[\(formattedDate())] Export failed: \(error.localizedDescription)"
+                outputText = outputText.isEmpty ? entry : "\(entry)\n\n\(outputText)"
+            }
+        }
+    }
+    
+    private func importLayoutFromFile() {
+        let openPanel = NSOpenPanel()
+        openPanel.title = "Load Display Layout"
+        openPanel.allowedContentTypes = [UTType.plainText]
+        openPanel.allowsMultipleSelection = false
+        openPanel.canChooseDirectories = false
+        
+        openPanel.begin { response in
+            guard response == .OK, let url = openPanel.url else { return }
+            
+            do {
+                let content = try String(contentsOf: url, encoding: .utf8)
+                let normalized = normalizeSavedCommand(content)
+                
+                if normalized.isEmpty {
+                    let entry = "[\(formattedDate())] Import failed: File is empty or invalid"
+                    outputText = outputText.isEmpty ? entry : "\(entry)\n\n\(outputText)"
+                    return
+                }
+                
+                setSavedApplyCommand(normalized)
+                let entry = "[\(formattedDate())] Imported layout from: \(url.path)\n\(normalized)"
+                outputText = outputText.isEmpty ? entry : "\(entry)\n\n\(outputText)"
+            } catch {
+                let entry = "[\(formattedDate())] Import failed: \(error.localizedDescription)"
+                outputText = outputText.isEmpty ? entry : "\(entry)\n\n\(outputText)"
+            }
         }
     }
 
