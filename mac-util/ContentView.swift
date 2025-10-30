@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 import Combine
 
 // Class to monitor display changes
+@MainActor
 class DisplayMonitor: ObservableObject {
     @Published var displayMessage: String = ""
     private var previousScreens: [NSScreen] = NSScreen.screens

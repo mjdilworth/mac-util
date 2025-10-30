@@ -6,6 +6,12 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		2774B2BD2EB1EBC100275BA5 /* RELEASE.md in Resources */ = {isa = PBXBuildFile; fileRef = 2774B2BC2EB1EBC100275BA5 /* RELEASE.md */; };
+		2774B2C32EB1ECAA00275BA5 /* notary-setup.sh in Resources */ = {isa = PBXBuildFile; fileRef = 2774B2C02EB1ECAA00275BA5 /* notary-setup.sh */; };
+		2774B2C42EB1ECAA00275BA5 /* release.sh in Resources */ = {isa = PBXBuildFile; fileRef = 2774B2C12EB1ECAA00275BA5 /* release.sh */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		273D165E2E5A4FAE00B469A9 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -39,6 +45,9 @@
 		273D164F2E5A4FAC00B469A9 /* mac-util.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "mac-util.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		273D165D2E5A4FAE00B469A9 /* mac-utilTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "mac-utilTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		273D16672E5A4FAE00B469A9 /* mac-utilUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "mac-utilUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+		2774B2BC2EB1EBC100275BA5 /* RELEASE.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = RELEASE.md; sourceTree = "<group>"; };
+		2774B2C02EB1ECAA00275BA5 /* notary-setup.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = "notary-setup.sh"; sourceTree = "<group>"; };
+		2774B2C12EB1ECAA00275BA5 /* release.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = release.sh; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
@@ -103,6 +112,8 @@
 		273D16462E5A4FAC00B469A9 = {
 			isa = PBXGroup;
 			children = (
+				2774B2C22EB1ECAA00275BA5 /* scripts */,
+				2774B2BC2EB1EBC100275BA5 /* RELEASE.md */,
 				273D16512E5A4FAC00B469A9 /* mac-util */,
 				273D16602E5A4FAE00B469A9 /* mac-utilTests */,
 				273D166A2E5A4FAE00B469A9 /* mac-utilUITests */,
@@ -118,6 +129,31 @@
 				273D16672E5A4FAE00B469A9 /* mac-utilUITests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		2774B2BE2EB1ECAA00275BA5 /* export */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = export;
+			sourceTree = "<group>";
+		};
+		2774B2BF2EB1ECAA00275BA5 /* build */ = {
+			isa = PBXGroup;
+			children = (
+				2774B2BE2EB1ECAA00275BA5 /* export */,
+			);
+			path = build;
+			sourceTree = "<group>";
+		};
+		2774B2C22EB1ECAA00275BA5 /* scripts */ = {
+			isa = PBXGroup;
+			children = (
+				2774B2BF2EB1ECAA00275BA5 /* build */,
+				2774B2C02EB1ECAA00275BA5 /* notary-setup.sh */,
+				2774B2C12EB1ECAA00275BA5 /* release.sh */,
+			);
+			path = scripts;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -242,6 +278,9 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				2774B2BD2EB1EBC100275BA5 /* RELEASE.md in Resources */,
+				2774B2C32EB1ECAA00275BA5 /* notary-setup.sh in Resources */,
+				2774B2C42EB1ECAA00275BA5 /* release.sh in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -477,9 +516,9 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ALLOW_ENTITLEMENTS_MODIFICATION = YES;
 				CODE_SIGN_ENTITLEMENTS = "mac-util/mac_util.entitlements";
-				CODE_SIGN_IDENTITY = "Developer ID Application";
-				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Developer ID Application";
-				CODE_SIGN_STYLE = Manual;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 8CQNFLS235;

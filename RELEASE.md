@@ -6,10 +6,26 @@ Prereqs
 - Optional: App Store Connect API key for notarization (recommended)
 
 One-time: set up notary credentials
-1) Create an API key in App Store Connect (Users and Access > Keys) and download the .p8 file.
-2) Store credentials in keychain:
-   ISSUER=<issuer-uuid> KEY_ID=<key-id> KEY_PATH=/path/to/AuthKey_<KEY_ID>.p8 \
+1) Go to App Store Connect: https://appstoreconnect.apple.com/access/api
+   - Sign in with your Apple ID
+   - Navigate to Users and Access > Keys (or Integrations > Keys)
+   - Click the "+" to create a new key (select "Developer" access)
+   - Note the Key ID (e.g., 55TUWU3X1JPV) and download the .p8 file (AuthKey_<KEY_ID>.p8)
+   
+2) Find your Issuer ID on the same page:
+   - On the Keys page, look for "Issuer ID" at the top (a UUID like xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)
+   - Copy it
+   
+3) Store credentials in keychain:
+   ISSUER=
+    KEY_ID= KEY_PATH=/Users/mike/Downloads/AuthKey_.p8 \
    scripts/notary-setup.sh
+   
+   Replace:
+   - <issuer-uuid> with the Issuer ID from step 2
+   - KEY_ID with your actual key ID
+   - KEY_PATH with the actual path to your downloaded .p8 file
+   
    This creates a keychain profile named macutil-notary.
 
 Build, export, zip, notarize, staple
