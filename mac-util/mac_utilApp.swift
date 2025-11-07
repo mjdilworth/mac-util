@@ -250,7 +250,7 @@ struct DillyApp: App {
     
     var body: some Scene {
         // Menu bar item with guaranteed system icon
-        MenuBarExtra("Display Controller", systemImage: "display") {
+        MenuBarExtra("Display Controller", systemImage: "gearshape") {
             VStack(alignment: .leading, spacing: 5) {
                 Button(autoRunEnabled ? "Disable Auto-Run" : "Enable Auto-Run") {
                     autoRunEnabled.toggle()
