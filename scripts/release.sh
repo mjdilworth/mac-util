@@ -76,6 +76,11 @@ fi
 echo "[6/6] Stapling and verifying..."
 xcrun stapler staple -q "$APP_PATH" || true
 
+# CRITICAL: Recreate zip after stapling so the distributed zip contains the stapled ticket
+echo "[7/7] Recreating zip with stapled ticket..."
+rm -f "$ZIP_PATH"
+/usr/bin/ditto -c -k --keepParent "$APP_PATH" "$ZIP_PATH"
+
 # Verify Gatekeeper assessment and codesign details
 spctl -a -vv "$APP_PATH" || true
 codesign --verify --deep --strict --verbose=2 "$APP_PATH" || true
@@ -85,8 +90,9 @@ cat <<EOF
 
 Done. Artifacts:
 - App:   $APP_PATH
-- Zip:   $ZIP_PATH
+- Zip:   $ZIP_PATH (contains stapled notarization ticket)
 
-If you enabled notarization, the ticket has been stapled (if available).
+The zip file now includes the stapled notarization ticket.
 Copy mac-util.zip to the other Mac, unzip, and run mac-util.app.
+On first launch, it should open without security warnings.
 EOF
